@@ -1,50 +1,23 @@
-# Fly.io configuration for trivia buzzer frontend
+# fly.toml app configuration file generated for simple-trivia-buzzer-fe on 2026-01-13T15:43:47Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "trivia-buzzer-frontend"
-primary_region = "sin" # Singapore - change to match your backend region
+app = 'simple-trivia-buzzer-fe'
+primary_region = 'sin'
 
 [build]
-  dockerfile = "Dockerfile"
-
-[env]
-  PORT = "3000"
-  # Backend URL will be set via secrets
 
 [http_service]
-  internal_port = 3000
+  internal_port = 8080
   force_https = true
-  auto_stop_machines = false
+  auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1
-  processes = ["app"]
+  min_machines_running = 0
+  processes = ['app']
 
-  [[http_service.checks]]
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "5s"
-    method = "GET"
-    path = "/"
-
-[[services]]
-  protocol = "tcp"
-  internal_port = 3000
-
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
-
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
-
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 1000
-    soft_limit = 800
-
-# Resources
-[vm]
-  memory = '512mb'
+[[vm]]
+  memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 1024
