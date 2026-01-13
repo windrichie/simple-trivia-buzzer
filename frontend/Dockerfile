@@ -4,6 +4,10 @@ FROM node:22-alpine AS builder
 # Set working directory
 WORKDIR /app
 
+# Accept build argument
+ARG NEXT_PUBLIC_WS_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+
 # Copy package files
 COPY package*.json ./
 
@@ -13,7 +17,7 @@ RUN npm install
 # Copy source files
 COPY . .
 
-# Build the Next.js app
+# Build the Next.js app (NEXT_PUBLIC_WS_URL is baked in here)
 RUN npm run build
 
 # Production image

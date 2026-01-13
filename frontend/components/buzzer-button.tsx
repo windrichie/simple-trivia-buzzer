@@ -143,7 +143,7 @@ export function BuzzerButton({
           ],
 
           // Disabled state (game not active)
-          isDisabled && gameState !== GameState.ACTIVE && [
+          isDisabled && [
             'bg-gradient-to-b from-gray-300 to-gray-400',
             'text-gray-500',
           ]
