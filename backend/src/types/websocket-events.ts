@@ -20,16 +20,12 @@ export enum GameState {
 }
 
 export enum BuzzerSound {
-  CLASSIC = 'classic',
-  HORN = 'horn',
-  BELL = 'bell',
-  BOING = 'boing',
-  CHIME = 'chime',
-  WHOOSH = 'whoosh',
-  BEEP = 'beep',
-  DING = 'ding',
-  BUZZ = 'buzz',
-  WHISTLE = 'whistle',
+  PARTY_HORN = 'party_horn',
+  BURPS = 'burps',
+  FARTS = 'farts',
+  SCREAMS = 'screams',
+  SNORE = 'snore',
+  MOAN = 'moan',
 }
 
 export interface Player {
@@ -116,6 +112,16 @@ export interface ClientToServerEvents {
   'gm:assignPoints': (
     data: { joinCode: string; playerId: string; points: number },
     callback: (response: { success: boolean; newScore?: number; error?: string }) => void
+  ) => void;
+
+  /**
+   * GM ends current question (completes scoring phase, returns to WAITING)
+   * @param joinCode - Session identifier
+   * @param callback - Confirms transition or returns error
+   */
+  'gm:endQuestion': (
+    data: { joinCode: string },
+    callback: (response: { success: boolean; error?: string }) => void
   ) => void;
 
   /**
@@ -282,6 +288,12 @@ export interface ServerToClientEvents {
    * Sent to: All clients in session
    */
   'game:questionSkipped': (data: { questionNumber: number }) => void;
+
+  /**
+   * GM ended the current question (completes scoring, state → WAITING)
+   * Sent to: All clients in session
+   */
+  'game:questionEnded': (data: { questionNumber: number }) => void;
 
   // ----------------------
   // Buzzer Events

@@ -25,6 +25,7 @@ export default function PlayerPage() {
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [gameState, setGameState] = useState<GameState>(GameState.WAITING);
+  const [questionNumber, setQuestionNumber] = useState(0);
   const [hasBuzzed, setHasBuzzed] = useState(false);
   const [isFirst, setIsFirst] = useState(false);
   const [scoreAnimation, setScoreAnimation] = useState(false);
@@ -313,16 +314,26 @@ export default function PlayerPage() {
     }
 
     function onQuestionStarted(data: { questionNumber: number }) {
+      setQuestionNumber(data.questionNumber);
       setGameState(GameState.ACTIVE);
       setHasBuzzed(false);
       setIsFirst(false);
     }
 
     function onScoringStarted(data: { questionNumber: number }) {
+      setQuestionNumber(data.questionNumber);
       setGameState(GameState.SCORING);
     }
 
     function onQuestionSkipped(data: { questionNumber: number }) {
+      setQuestionNumber(data.questionNumber);
+      setGameState(GameState.WAITING);
+      setHasBuzzed(false);
+      setIsFirst(false);
+    }
+
+    function onQuestionEnded(data: { questionNumber: number }) {
+      setQuestionNumber(data.questionNumber);
       setGameState(GameState.WAITING);
       setHasBuzzed(false);
       setIsFirst(false);
@@ -332,12 +343,14 @@ export default function PlayerPage() {
     socket.on('game:questionStarted', onQuestionStarted);
     socket.on('game:scoringStarted', onScoringStarted);
     socket.on('game:questionSkipped', onQuestionSkipped);
+    socket.on('game:questionEnded', onQuestionEnded);
 
     return () => {
       socket.off('game:stateChanged', onGameStateChanged);
       socket.off('game:questionStarted', onQuestionStarted);
       socket.off('game:scoringStarted', onScoringStarted);
       socket.off('game:questionSkipped', onQuestionSkipped);
+      socket.off('game:questionEnded', onQuestionEnded);
     };
   }, [socket]);
 
@@ -536,6 +549,14 @@ export default function PlayerPage() {
       {wasDisconnected && isConnected && (
         <div className="bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded-lg text-center">
           <strong>Reconnected!</strong> You're back online.
+        </div>
+      )}
+
+      {/* Question Number Display - show when question is active */}
+      {questionNumber > 0 && (
+        <div className="bg-primary/10 border-2 border-primary rounded-lg px-4 py-3 text-center">
+          <div className="text-sm text-muted-foreground font-medium">Current Question</div>
+          <div className="text-3xl font-bold text-primary">#{questionNumber}</div>
         </div>
       )}
 

@@ -76,6 +76,8 @@ export default function GameMasterPage() {
     function onSessionCreated(data: { joinCode: string; session: GameSession }) {
       setSession(data.session);
       setPlayers(data.session.players);
+      setGameState(data.session.gameState);
+      setQuestionNumber(data.session.currentQuestionNumber);
     }
 
     function onPlayerJoined(data: { player: Player }) {
@@ -119,7 +121,11 @@ export default function GameMasterPage() {
       questionNumber: number;
     }) {
       setGameState(data.newState);
-      setQuestionNumber(data.questionNumber);
+      // Only update questionNumber when not transitioning to WAITING
+      // (WAITING transitions are handled by specific event handlers)
+      if (data.newState !== GameState.WAITING) {
+        setQuestionNumber(data.questionNumber);
+      }
     }
 
     function onQuestionStarted(data: { questionNumber: number }) {
@@ -137,7 +143,16 @@ export default function GameMasterPage() {
 
     function onQuestionSkipped(data: { questionNumber: number }) {
       setGameState(GameState.WAITING);
-      setQuestionNumber(0);
+      // Keep the skipped question number so "Start Question X+1" shows correctly
+      setQuestionNumber(data.questionNumber);
+      setBuzzerPresses([]);
+      setFirstBuzzerId(null);
+    }
+
+    function onQuestionEnded(data: { questionNumber: number }) {
+      setGameState(GameState.WAITING);
+      // Keep the completed question number so "Start Question X+1" shows correctly
+      setQuestionNumber(data.questionNumber);
       setBuzzerPresses([]);
       setFirstBuzzerId(null);
     }
@@ -146,12 +161,14 @@ export default function GameMasterPage() {
     socket.on('game:questionStarted', onQuestionStarted);
     socket.on('game:scoringStarted', onScoringStarted);
     socket.on('game:questionSkipped', onQuestionSkipped);
+    socket.on('game:questionEnded', onQuestionEnded);
 
     return () => {
       socket.off('game:stateChanged', onGameStateChanged);
       socket.off('game:questionStarted', onQuestionStarted);
       socket.off('game:scoringStarted', onScoringStarted);
       socket.off('game:questionSkipped', onQuestionSkipped);
+      socket.off('game:questionEnded', onQuestionEnded);
     };
   }, [socket]);
 
@@ -234,6 +251,10 @@ export default function GameMasterPage() {
         setJoinCode(null);
         setSession(null);
         setPlayers([]);
+        setGameState(GameState.WAITING);
+        setQuestionNumber(0);
+        setBuzzerPresses([]);
+        setFirstBuzzerId(null);
       } else {
         setError(response.error || 'Failed to end session');
       }
@@ -326,6 +347,27 @@ export default function GameMasterPage() {
 
     handleAssignPoints(playerId, points);
     setCustomPoints({ ...customPoints, [playerId]: '' });
+  };
+
+  // Handle ending question (completing scoring phase)
+  const handleEndQuestion = () => {
+    if (!joinCode) return;
+
+    setIsProcessingAction(true);
+    setError('');
+
+    socket.emit('gm:endQuestion', { joinCode }, (response) => {
+      setIsProcessingAction(false);
+
+      if (response.success) {
+        setError('');
+        // Clear buzzer presses when returning to WAITING state
+        setBuzzerPresses([]);
+        setFirstBuzzerId(null);
+      } else {
+        setError(response.error || 'Failed to end question');
+      }
+    });
   };
 
   if (!isConnected) {
@@ -466,6 +508,19 @@ export default function GameMasterPage() {
               {isProcessingAction ? 'Skipping...' : 'Skip Question'}
             </Button>
           </div>
+
+          {/* End Question button (only enabled in SCORING state) */}
+          <Button
+            onClick={handleEndQuestion}
+            disabled={gameState !== GameState.SCORING || isProcessingAction}
+            className="w-full"
+            size="lg"
+            variant="default"
+          >
+            {isProcessingAction && gameState === GameState.SCORING
+              ? 'Ending...'
+              : 'End Question & Continue'}
+          </Button>
         </CardContent>
       </Card>
 

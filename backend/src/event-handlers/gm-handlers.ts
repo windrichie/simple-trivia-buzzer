@@ -145,14 +145,13 @@ export function handleStartQuestion(
   }
 
   // T070: Create new Question with incremented number
-  const questionNumber = session.currentQuestion
-    ? session.currentQuestion.questionNumber + 1
-    : 1;
+  const questionNumber = session.lastQuestionNumber + 1;
 
   const question = createQuestion(questionNumber);
 
   // T071: Set session.currentQuestion and update gameState to ACTIVE
   session.currentQuestion = question;
+  session.lastQuestionNumber = questionNumber;
   session.gameState = GameState.ACTIVE;
 
   // T072: Reset all players' lastBuzzTimestamp to null
@@ -385,4 +384,68 @@ export function handleAssignPoints(
     success: true,
     newScore,
   });
+}
+
+/**
+ * Handle GM ending a question/completing scoring phase
+ * Transition from SCORING → WAITING to allow next question
+ */
+export function handleEndQuestion(
+  socket: Socket,
+  data: { joinCode: string },
+  callback: (response: { success: boolean; error?: string }) => void
+): void {
+  const session = sessionStore.getSession(data.joinCode);
+
+  if (!session) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.SESSION_NOT_FOUND],
+    });
+  }
+
+  if (!session.isActive) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.SESSION_INACTIVE],
+    });
+  }
+
+  // Only allow ending question from SCORING state
+  if (session.gameState !== GameState.SCORING) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.INVALID_STATE_TRANSITION],
+    });
+  }
+
+  if (!session.currentQuestion) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.INVALID_STATE_TRANSITION],
+    });
+  }
+
+  const questionNumber = session.currentQuestion.questionNumber;
+
+  // Transition SCORING → WAITING, reset currentQuestion
+  session.gameState = GameState.WAITING;
+  session.currentQuestion = null;
+
+  sessionStore.updateActivity(data.joinCode);
+
+  console.log(`[GM] Ended question ${questionNumber} in session ${data.joinCode}`);
+
+  // Broadcast game:questionEnded
+  io.to(data.joinCode).emit('game:questionEnded', {
+    questionNumber,
+  });
+
+  io.to(data.joinCode).emit('game:stateChanged', {
+    joinCode: data.joinCode,
+    newState: GameState.WAITING,
+    questionNumber: 0, // No active question
+  });
+
+  callback({ success: true });
 }

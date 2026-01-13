@@ -7,6 +7,7 @@ export interface GameSession {
   players: Map<string, Player>; // playerId -> Player
   gameState: GameState;
   currentQuestion: Question | null;
+  lastQuestionNumber: number; // Track highest question number in this session
   createdAt: number;
   lastActivity: number;
   isActive: boolean;
@@ -22,6 +23,7 @@ export function createGameSession(joinCode: string): GameSession {
     players: new Map(),
     gameState: GameState.WAITING,
     currentQuestion: null,
+    lastQuestionNumber: 0,
     createdAt: now,
     lastActivity: now,
     isActive: true,

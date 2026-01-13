@@ -50,7 +50,8 @@ import {
   handleStartQuestion,
   handleMoveToScoring,
   handleSkipQuestion,
-  handleAssignPoints
+  handleAssignPoints,
+  handleEndQuestion
 } from './event-handlers/gm-handlers.js';
 import {
   handlePlayerJoin,
@@ -87,6 +88,10 @@ io.on('connection', (socket) => {
 
   socket.on('gm:assignPoints', (data, callback) => {
     handleAssignPoints(socket, data, callback);
+  });
+
+  socket.on('gm:endQuestion', (data, callback) => {
+    handleEndQuestion(socket, data, callback);
   });
 
   // Player event handlers
