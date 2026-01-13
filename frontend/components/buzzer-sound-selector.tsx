@@ -27,16 +27,12 @@ interface BuzzerSoundSelectorProps {
 
 // Display names for buzzer sounds
 const SOUND_LABELS: Record<BuzzerSound, string> = {
-  [BuzzerSound.CLASSIC]: '🔔 Classic',
-  [BuzzerSound.HORN]: '📯 Horn',
-  [BuzzerSound.BELL]: '🔔 Bell',
-  [BuzzerSound.BOING]: '🎵 Boing',
-  [BuzzerSound.CHIME]: '🎶 Chime',
-  [BuzzerSound.WHOOSH]: '💨 Whoosh',
-  [BuzzerSound.BEEP]: '📟 Beep',
-  [BuzzerSound.DING]: '🛎 Ding',
-  [BuzzerSound.BUZZ]: '🐝 Buzz',
-  [BuzzerSound.WHISTLE]: '🎵 Whistle',
+  [BuzzerSound.PARTY_HORN]: '🎉 Party Horn',
+  [BuzzerSound.BURPS]: '🤢 Burps',
+  [BuzzerSound.FARTS]: '💨 Farts',
+  [BuzzerSound.SCREAMS]: '😱 Screams',
+  [BuzzerSound.SNORE]: '😴 Snore',
+  [BuzzerSound.MOAN]: '😩 KT MUST USE THIS',
 };
 
 export function BuzzerSoundSelector({

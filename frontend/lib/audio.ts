@@ -31,16 +31,12 @@ function generateSynthSound(sound: BuzzerSound, volume: number = 0.7): void {
 
   // Sound characteristics based on buzzer type
   const soundConfigs: Record<BuzzerSound, { freq: number; duration: number; type: OscillatorType }> = {
-    [BuzzerSound.CLASSIC]: { freq: 440, duration: 0.3, type: 'square' },
-    [BuzzerSound.HORN]: { freq: 220, duration: 0.5, type: 'sawtooth' },
-    [BuzzerSound.BELL]: { freq: 880, duration: 0.4, type: 'sine' },
-    [BuzzerSound.BOING]: { freq: 200, duration: 0.6, type: 'sine' },
-    [BuzzerSound.CHIME]: { freq: 1320, duration: 0.3, type: 'sine' },
-    [BuzzerSound.WHOOSH]: { freq: 800, duration: 0.2, type: 'sawtooth' },
-    [BuzzerSound.BEEP]: { freq: 1000, duration: 0.15, type: 'square' },
-    [BuzzerSound.DING]: { freq: 2000, duration: 0.25, type: 'triangle' },
-    [BuzzerSound.BUZZ]: { freq: 150, duration: 0.4, type: 'square' },
-    [BuzzerSound.WHISTLE]: { freq: 1500, duration: 0.35, type: 'sine' },
+    [BuzzerSound.PARTY_HORN]: { freq: 220, duration: 0.5, type: 'sawtooth' },
+    [BuzzerSound.BURPS]: { freq: 150, duration: 0.4, type: 'square' },
+    [BuzzerSound.FARTS]: { freq: 100, duration: 0.6, type: 'sawtooth' },
+    [BuzzerSound.SCREAMS]: { freq: 1500, duration: 0.35, type: 'sine' },
+    [BuzzerSound.SNORE]: { freq: 120, duration: 0.8, type: 'square' },
+    [BuzzerSound.MOAN]: { freq: 300, duration: 0.7, type: 'sine' },
   };
 
   const config = soundConfigs[sound];
@@ -51,10 +47,10 @@ function generateSynthSound(sound: BuzzerSound, volume: number = 0.7): void {
   oscillator.frequency.setValueAtTime(config.freq, now);
 
   // Special frequency sweeps for certain sounds
-  if (sound === BuzzerSound.BOING) {
-    oscillator.frequency.exponentialRampToValueAtTime(100, now + config.duration);
-  } else if (sound === BuzzerSound.WHOOSH) {
-    oscillator.frequency.exponentialRampToValueAtTime(400, now + config.duration);
+  if (sound === BuzzerSound.FARTS || sound === BuzzerSound.BURPS) {
+    oscillator.frequency.exponentialRampToValueAtTime(80, now + config.duration);
+  } else if (sound === BuzzerSound.SNORE) {
+    oscillator.frequency.exponentialRampToValueAtTime(90, now + config.duration);
   }
 
   // Create gain node for volume envelope
@@ -87,11 +83,23 @@ function getSupportedFormat(): 'mp3' | 'ogg' {
 }
 
 /**
+ * Map buzzer sound enum to actual file names
+ */
+const soundFileMap: Record<BuzzerSound, string> = {
+  [BuzzerSound.PARTY_HORN]: 'party_horn',
+  [BuzzerSound.BURPS]: 'human_burps',
+  [BuzzerSound.FARTS]: 'human_farts',
+  [BuzzerSound.SCREAMS]: 'kid_screams',
+  [BuzzerSound.SNORE]: 'male_snore',
+  [BuzzerSound.MOAN]: 'female_moan',
+};
+
+/**
  * Get the audio file path for a buzzer sound
  */
 export function getAudioPath(sound: BuzzerSound): string {
-  const format = getSupportedFormat();
-  return `/sounds/${sound}.${format}`;
+  const fileName = soundFileMap[sound];
+  return `/sounds/${fileName}.mp3`;
 }
 
 /**

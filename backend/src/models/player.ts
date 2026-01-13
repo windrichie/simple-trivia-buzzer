@@ -29,7 +29,7 @@ export function createPlayer(
     nickname,
     password,
     score: 0,
-    buzzerSound: BuzzerSound.CLASSIC,
+    buzzerSound: BuzzerSound.PARTY_HORN,
     connectionId,
     isConnected: true,
     lastBuzzTimestamp: null,
