@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy source files
 COPY . .
@@ -28,7 +28,7 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/next.config.js ./
 
 # Install only production dependencies
-RUN npm ci --only=production
+RUN npm install --production
 
 # Expose port
 EXPOSE 3000
