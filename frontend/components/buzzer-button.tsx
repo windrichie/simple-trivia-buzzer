@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { BuzzerSound, GameState } from '@/lib/websocket-events';
 import { useAudio } from '@/hooks/use-audio';
 import { useVibration } from '@/hooks/use-vibration';
@@ -32,14 +32,6 @@ export function BuzzerButton({
   const { vibrateMedium, vibrateSuccess } = useVibration();
   const [isPressing, setIsPressing] = useState(false);
   const [showFirstIndicator, setShowFirstIndicator] = useState(false);
-  const pressedRef = useRef(false);
-
-  // Reset pressed state when question changes (hasBuzzed becomes false)
-  useEffect(() => {
-    if (!hasBuzzed) {
-      pressedRef.current = false;
-    }
-  }, [hasBuzzed]);
 
   // Show first indicator animation
   useEffect(() => {
@@ -55,39 +47,33 @@ export function BuzzerButton({
   }, [isFirst, hasBuzzed, vibrateSuccess]);
 
   const handleBuzzerPress = useCallback(async () => {
-    // Prevent multiple presses
-    if (pressedRef.current) {
+    // Only check if game is active, allow multiple presses
+    if (gameState !== GameState.ACTIVE) {
       return;
     }
 
-    // Check if buzzer is disabled
-    if (gameState !== GameState.ACTIVE || hasBuzzed) {
-      return;
-    }
-
-    pressedRef.current = true;
     setIsPressing(true);
 
     // T135: Haptic feedback for buzzer press
     vibrateMedium();
 
-    // Play sound immediately for instant feedback
+    // Play sound immediately for instant feedback (every time!)
     if (isLoaded) {
       play(buzzerSound);
     }
 
-    // Emit buzzer press to server
-    try {
-      const response = await onPressBuzzer({ joinCode, playerId });
+    // Emit buzzer press to server (server tracks first press)
+    // Only emit to server if this is the first press
+    if (!hasBuzzed) {
+      try {
+        const response = await onPressBuzzer({ joinCode, playerId });
 
-      if (!response.success) {
-        console.error('[Buzzer] Press failed:', response.error);
-        // Reset if server rejected
-        pressedRef.current = false;
+        if (!response.success) {
+          console.error('[Buzzer] Press failed:', response.error);
+        }
+      } catch (error) {
+        console.error('[Buzzer] Press error:', error);
       }
-    } catch (error) {
-      console.error('[Buzzer] Press error:', error);
-      pressedRef.current = false;
     }
 
     // Visual feedback duration
@@ -103,7 +89,7 @@ export function BuzzerButton({
   }, [handleBuzzerPress]);
 
   // Determine button state and styling
-  const isDisabled = gameState !== GameState.ACTIVE || hasBuzzed;
+  const isDisabled = gameState !== GameState.ACTIVE;
   const buttonState = hasBuzzed ? 'buzzed' : isPressing ? 'pressing' : 'ready';
 
   return (
@@ -146,11 +132,14 @@ export function BuzzerButton({
             'text-white',
           ],
 
-          // Buzzed state - already pressed
-          buttonState === 'buzzed' && [
-            'bg-gradient-to-b from-gray-400 to-gray-500',
-            'text-gray-100',
-            'cursor-not-allowed',
+          // Buzzed state - already pressed but still clickable
+          buttonState === 'buzzed' && !isPressing && [
+            'bg-gradient-to-b from-yellow-500 to-orange-600',
+            'hover:from-yellow-600 hover:to-orange-700',
+            'shadow-2xl shadow-yellow-500/50',
+            'text-white',
+            'focus:ring-yellow-400',
+            'cursor-pointer',
           ],
 
           // Disabled state (game not active)
@@ -163,10 +152,10 @@ export function BuzzerButton({
         aria-disabled={isDisabled}
       >
         <div className="flex flex-col items-center justify-center gap-2">
-          {hasBuzzed ? (
+          {hasBuzzed && gameState === GameState.ACTIVE ? (
             <>
-              <span className="text-5xl">✓</span>
-              <span className="text-lg">BUZZED</span>
+              <span className="text-5xl">🎉</span>
+              <span className="text-lg">BUZZ AGAIN!</span>
             </>
           ) : gameState === GameState.ACTIVE ? (
             <>
@@ -189,11 +178,11 @@ export function BuzzerButton({
 
       {/* Status text */}
       <div className="text-center text-sm text-muted-foreground">
-        {hasBuzzed ? (
+        {hasBuzzed && gameState === GameState.ACTIVE ? (
           isFirst ? (
-            <span className="font-bold text-yellow-600">You buzzed first!</span>
+            <span className="font-bold text-yellow-600">You buzzed first! Keep clicking for fun! 🎊</span>
           ) : (
-            <span>You buzzed</span>
+            <span>You buzzed! Keep clicking! 🎉</span>
           )
         ) : gameState === GameState.ACTIVE ? (
           <span>Press to buzz in</span>
