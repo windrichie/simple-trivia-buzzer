@@ -5,9 +5,8 @@ npm-debug.log
 .git
 .gitignore
 README.md
-src
 tests
 *.test.ts
 .eslintrc*
-tsconfig.json
 .DS_Store
+dist
