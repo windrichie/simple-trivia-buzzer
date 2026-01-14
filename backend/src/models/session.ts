@@ -3,6 +3,7 @@ import { Player } from './player.js';
 import { Question } from './question.js';
 
 import { LeaderboardData } from '../types/websocket-events.js';
+import { MAX_PLAYERS } from '../config.js';
 
 export interface GameSession {
   joinCode: string;
@@ -49,7 +50,7 @@ export function updateSessionActivity(session: GameSession): void {
  * Check if session has space for more players
  */
 export function hasSpaceForPlayer(session: GameSession): boolean {
-  return session.players.size < 5; // Max 5 players
+  return session.players.size < MAX_PLAYERS;
 }
 
 /**
