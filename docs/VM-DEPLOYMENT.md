@@ -216,6 +216,9 @@ cat > .env << 'EOF'
 # GM Password (change this!)
 GM_PASSWORD=your-secure-password-here
 
+# Maximum players per session (optional, default: 10)
+MAX_PLAYERS=10
+
 # Production URLs
 NODE_ENV=production
 FRONTEND_URL=https://trivia.yourdomain.com

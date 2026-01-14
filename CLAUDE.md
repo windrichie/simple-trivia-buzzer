@@ -186,6 +186,42 @@ trivia-simple-app/
 
 ---
 
+## Configuration
+
+The application is configured via environment variables defined in `.env` file or deployment platform secrets.
+
+### Backend Configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GM_PASSWORD` | ✅ Yes | `changeme123` | Game Master password for creating sessions. **Must be changed in production!** |
+| `MAX_PLAYERS` | ❌ No | `10` | Maximum number of players allowed per game session. Configurable from 1 to 100+. |
+| `FRONTEND_URL` | ✅ Yes (prod) | `http://localhost:3000` | Frontend URL for CORS configuration. Required in production. |
+| `PORT` | ❌ No | `3001` | Backend server port. |
+| `NODE_ENV` | ❌ No | `development` | Node environment (`development`, `production`). |
+
+### Frontend Configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXT_PUBLIC_WS_URL` | ✅ Yes | `http://localhost:3001` | WebSocket backend URL. Must be publicly accessible. |
+
+### Configuration Notes
+
+**MAX_PLAYERS Scaling**:
+- Default of 10 players is suitable for most trivia games
+- Can be increased to 20, 50, or higher for larger events
+- No hard technical limit (uses in-memory Map storage)
+- Frontend leaderboard UI works with any number of players
+- Warning logged on startup if set above 100
+
+**Security**:
+- `GM_PASSWORD` is stored as plaintext in `.env` but hashed with bcryptjs before storing in session
+- Player passwords are hashed with bcryptjs (10 salt rounds) before storage
+- CORS configured to only allow specified `FRONTEND_URL` in production
+
+---
+
 ## Features Implemented
 
 ### Feature 001: Trivia Buzzer App (Core)
@@ -470,7 +506,12 @@ cd trivia-simple-app
 npm install
 
 # Create .env file
-echo "GM_PASSWORD=your-secret-password" > .env
+cat > .env << 'EOF'
+GM_PASSWORD=your-secret-password
+MAX_PLAYERS=10
+FRONTEND_URL=http://localhost:3000
+NEXT_PUBLIC_WS_URL=http://localhost:3001
+EOF
 
 # Start development servers (frontend + backend)
 npm run dev
@@ -553,6 +594,7 @@ cd backend
 flyctl secrets set GM_PASSWORD="your-password"
 flyctl secrets set FRONTEND_URL="https://trivia-buzzer-frontend.fly.dev"
 flyctl secrets set NODE_ENV="production"
+flyctl secrets set MAX_PLAYERS="10"  # Optional, defaults to 10
 
 # Deploy (builds automatically inside Docker)
 flyctl deploy

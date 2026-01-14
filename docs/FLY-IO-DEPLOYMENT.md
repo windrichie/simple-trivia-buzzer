@@ -39,6 +39,9 @@ flyctl launch
 ### 1.3 Set Backend Secrets
 ```bash
 flyctl secrets set GM_PASSWORD="your-secure-password-here"
+
+# Optional: Set max players per session (default is 10)
+flyctl secrets set MAX_PLAYERS="20"
 ```
 
 ### 1.4 Deploy Backend
@@ -204,7 +207,8 @@ flyctl scale count 2
 ```bash
 flyctl secrets list
 # Should show:
-# - GM_PASSWORD
+# - GM_PASSWORD (required)
+# - MAX_PLAYERS (optional, default: 10)
 # - PORT (auto-set in fly.toml)
 ```
 

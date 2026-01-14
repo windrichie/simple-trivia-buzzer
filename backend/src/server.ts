@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { ClientToServerEvents, ServerToClientEvents } from './types/websocket-events.js';
+import { validateConfig, PORT, FRONTEND_URL, NODE_ENV } from './config.js';
 
 // Get directory paths for ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -21,8 +22,8 @@ const httpServer = createServer(app);
 // Middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? process.env.FRONTEND_URL
+  origin: NODE_ENV === 'production'
+    ? FRONTEND_URL
     : ['http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
 }));
@@ -36,8 +37,8 @@ app.get('/health', (req, res) => {
 // Initialize Socket.IO with typed events
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production'
-      ? process.env.FRONTEND_URL
+    origin: NODE_ENV === 'production'
+      ? FRONTEND_URL
       : ['http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
   },
@@ -135,9 +136,10 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start server
-const PORT = parseInt(process.env.PORT || '3001');
+// Validate configuration
+validateConfig();
 
+// Start server
 httpServer.listen(PORT, () => {
   console.log(`[Server] Backend server running on port ${PORT}`);
   console.log(`[Server] Health check available at http://localhost:${PORT}/health`);

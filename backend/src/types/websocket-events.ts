@@ -508,7 +508,7 @@ export const VALIDATION = {
   },
   SESSION: {
     MIN_PLAYERS: 1,
-    MAX_PLAYERS: 5,
+    MAX_PLAYERS: 10, // Default - can be overridden via MAX_PLAYERS env var in config.ts
     JOIN_CODE_LENGTH: 6,
     JOIN_CODE_PATTERN: /^[A-Z2-9]{6}$/, // Uppercase letters + numbers, excluding confusing chars
   },
@@ -520,10 +520,11 @@ export const VALIDATION = {
 
 /**
  * Human-readable error messages
+ * Note: Some messages are dynamic - use getErrorMessage() for SESSION_FULL
  */
 export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.SESSION_NOT_FOUND]: 'Game session not found. Please check the join code.',
-  [ErrorCode.SESSION_FULL]: 'This session is full (maximum 5 players).',
+  [ErrorCode.SESSION_FULL]: 'This session is full.', // Dynamic limit - see getErrorMessage()
   [ErrorCode.SESSION_INACTIVE]: 'This session has ended.',
   [ErrorCode.INVALID_JOIN_CODE]: 'Invalid join code format.',
 
@@ -586,4 +587,15 @@ export function isValidPassword(password: string): boolean {
     password.length >= VALIDATION.PASSWORD.MIN_LENGTH &&
     password.length <= VALIDATION.PASSWORD.MAX_LENGTH
   );
+}
+
+/**
+ * Get error message with dynamic values (like MAX_PLAYERS from config)
+ * Import MAX_PLAYERS from config.ts when calling this function
+ */
+export function getErrorMessage(errorCode: ErrorCode, maxPlayers?: number): string {
+  if (errorCode === ErrorCode.SESSION_FULL && maxPlayers !== undefined) {
+    return `This session is full (maximum ${maxPlayers} players).`;
+  }
+  return ERROR_MESSAGES[errorCode];
 }

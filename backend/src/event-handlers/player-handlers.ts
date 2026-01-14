@@ -3,8 +3,9 @@ import { sessionStore } from '../session-manager.js';
 import { createPlayer } from '../models/player.js';
 import { hasSpaceForPlayer, isNicknameTaken } from '../models/session.js';
 import { isValidNickname, isValidPassword, isValidJoinCode, sanitizeNickname } from '../utils/validation.js';
-import { ErrorCode, ERROR_MESSAGES, GameState, BuzzerSound, isValidBuzzerSound } from '../types/websocket-events.js';
+import { ErrorCode, ERROR_MESSAGES, GameState, BuzzerSound, isValidBuzzerSound, getErrorMessage } from '../types/websocket-events.js';
 import { addBuzzerPress, hasPlayerBuzzed } from '../models/question.js';
+import { MAX_PLAYERS } from '../config.js';
 
 /**
  * Handle player joining a session
@@ -45,11 +46,11 @@ export function handlePlayerJoin(
     });
   }
 
-  // T032: Check session capacity (<5 players)
+  // T032: Check session capacity
   if (!hasSpaceForPlayer(session)) {
     return callback({
       success: false,
-      error: ERROR_MESSAGES[ErrorCode.SESSION_FULL],
+      error: getErrorMessage(ErrorCode.SESSION_FULL, MAX_PLAYERS),
     });
   }
 
