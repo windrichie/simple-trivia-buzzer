@@ -1,4 +1,6 @@
 import { GameSession, createGameSession, updateSessionActivity } from './models/session.js';
+import { SessionMetadata } from './types/websocket-events.js';
+import { comparePassword } from './utils/password-utils.js';
 
 // Cleanup runs every 10 minutes
 const CLEANUP_INTERVAL = parseInt(process.env.SESSION_CLEANUP_INTERVAL || '600000');
@@ -17,9 +19,11 @@ export class SessionStore {
 
   /**
    * Create a new game session
+   * @param joinCode - Unique session identifier
+   * @param gmPasswordHash - Bcrypt hash of GM password (for ownership verification)
    */
-  createSession(joinCode: string): GameSession {
-    const session = createGameSession(joinCode);
+  createSession(joinCode: string, gmPasswordHash: string): GameSession {
+    const session = createGameSession(joinCode, gmPasswordHash);
     this.sessions.set(joinCode, session);
     return session;
   }
@@ -70,6 +74,29 @@ export class SessionStore {
   }
 
   /**
+   * Get all sessions for a specific GM password (Feature 002)
+   * @param gmPassword - Plaintext GM password to verify against session hashes
+   * @returns Array of SessionMetadata for sessions matching the password
+   */
+  async getSessionsByPassword(gmPassword: string): Promise<SessionMetadata[]> {
+    const matchingSessions: SessionMetadata[] = [];
+
+    for (const session of this.sessions.values()) {
+      // Compare password with stored hash
+      const isMatch = await comparePassword(gmPassword, session.gmPasswordHash);
+
+      if (isMatch) {
+        matchingSessions.push(toSessionMetadata(session));
+      }
+    }
+
+    // Sort by lastActivity descending (most recent first)
+    matchingSessions.sort((a, b) => b.lastActivity - a.lastActivity);
+
+    return matchingSessions;
+  }
+
+  /**
    * Start cleanup interval
    */
   private startCleanupInterval(): void {
@@ -113,6 +140,32 @@ export class SessionStore {
       this.cleanupTimer = null;
     }
   }
+}
+
+/**
+ * Convert internal GameSession to SessionMetadata (Feature 002)
+ * Excludes sensitive data like password hashes
+ * @param session - Internal GameSession model
+ * @returns SessionMetadata for API transmission
+ */
+function toSessionMetadata(session: GameSession): SessionMetadata {
+  // Count connected players
+  let connectedCount = 0;
+  for (const player of session.players.values()) {
+    if (player.isConnected) {
+      connectedCount++;
+    }
+  }
+
+  return {
+    joinCode: session.joinCode,
+    playerCount: session.players.size,
+    connectedPlayerCount: connectedCount,
+    createdAt: session.createdAt,
+    lastActivity: session.lastActivity,
+    gameState: session.gameState,
+    questionNumber: session.lastQuestionNumber,
+  };
 }
 
 // Export singleton instance

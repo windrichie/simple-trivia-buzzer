@@ -30,6 +30,14 @@ export function GameStateIndicator({ gameState, questionNumber }: GameStateIndic
       bgColor: 'bg-blue-50',
       description: `Question ${questionNumber} - Assign points`,
       emoji: '📊'
+    },
+    [GameState.ENDED]: {
+      label: 'Ended',
+      color: 'bg-purple-500',
+      borderColor: 'border-purple-200',
+      bgColor: 'bg-purple-50',
+      description: 'Game complete - View leaderboard',
+      emoji: '🏆'
     }
   };
 

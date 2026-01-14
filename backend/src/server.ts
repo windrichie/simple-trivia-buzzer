@@ -51,7 +51,10 @@ import {
   handleMoveToScoring,
   handleSkipQuestion,
   handleAssignPoints,
-  handleEndQuestion
+  handleEndQuestion,
+  handleEndGame,                 // Feature 003
+  handleGetActiveSessions,       // Feature 002
+  handleReconnectToSession       // Feature 002
 } from './event-handlers/gm-handlers.js';
 import {
   handlePlayerJoin,
@@ -74,6 +77,15 @@ io.on('connection', (socket) => {
     handleEndSession(socket, data, callback);
   });
 
+  // Feature 002: GM Session Reconnection
+  socket.on('gm:getActiveSessions', (data, callback) => {
+    handleGetActiveSessions(socket, data, callback);
+  });
+
+  socket.on('gm:reconnectToSession', (data, callback) => {
+    handleReconnectToSession(socket, data, callback);
+  });
+
   socket.on('gm:startQuestion', (data, callback) => {
     handleStartQuestion(socket, data, callback);
   });
@@ -92,6 +104,11 @@ io.on('connection', (socket) => {
 
   socket.on('gm:endQuestion', (data, callback) => {
     handleEndQuestion(socket, data, callback);
+  });
+
+  // Feature 003: Game End & Leaderboard
+  socket.on('gm:endGame', (data, callback) => {
+    handleEndGame(socket, data, callback);
   });
 
   // Player event handlers

@@ -8,8 +8,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Eye, EyeOff, Copy, Check } from 'lucide-react';
 import { GameState } from '@/lib/websocket-events';
-import type { GameSession, Player } from '@/lib/websocket-events';
+import type { GameSession, Player, SessionMetadata, LeaderboardData } from '@/lib/websocket-events';
 import { GameStateIndicator } from '@/components/game-state-indicator';
+import { SessionSelector } from '@/components/session-selector';
+import { Leaderboard } from '@/components/leaderboard';
 
 export default function GameMasterPage() {
   const { socket, isConnected } = useSocket();
@@ -31,6 +33,51 @@ export default function GameMasterPage() {
   // T141: Track connection status for reconnection handling
   const [wasDisconnected, setWasDisconnected] = useState(false);
 
+  // Feature 002: Session reconnection state
+  const [sessions, setSessions] = useState<SessionMetadata[]>([]);
+  const [showSessionSelector, setShowSessionSelector] = useState(false);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+
+  // Feature 003: Game End & Leaderboard state
+  const [leaderboard, setLeaderboard] = useState<LeaderboardData | null>(null);
+
+  // Auto-login: Load stored GM password from localStorage
+  useEffect(() => {
+    const storedPassword = localStorage.getItem('gmPassword');
+    if (storedPassword && !joinCode && !showSessionSelector && isConnected) {
+      setGmPassword(storedPassword);
+      setIsLoadingSessions(true);
+      setError('');
+
+      // Auto-submit to check for sessions
+      setTimeout(() => {
+        socket.emit('gm:getActiveSessions', { gmPassword: storedPassword }, (response) => {
+          setIsLoadingSessions(false);
+
+          if (response.success && response.sessions) {
+            localStorage.setItem('gmPassword', storedPassword);
+            setSessions(response.sessions);
+            setShowSessionSelector(true);
+          } else {
+            setError(response.error || 'Failed to fetch sessions');
+          }
+        });
+      }, 100);
+    }
+  }, [isConnected, joinCode, showSessionSelector, socket]); // Dependencies
+
+  // Handle logout - clear stored password
+  const handleLogout = () => {
+    localStorage.removeItem('gmPassword');
+    setGmPassword('');
+    setShowSessionSelector(false);
+    setSessions([]);
+    setJoinCode(null);
+    setSession(null);
+    setPlayers([]);
+    setError('');
+  };
+
   // T150: Handle copy join code to clipboard
   const handleCopyJoinCode = async () => {
     if (!joinCode) return;
@@ -44,8 +91,8 @@ export default function GameMasterPage() {
     }
   };
 
-  // T040: Handle session creation
-  const handleCreateSession = () => {
+  // Feature 002: Handle password submission - check for existing sessions first
+  const handlePasswordSubmit = () => {
     // T142: Client-side validation with specific error messages
     if (!gmPassword) {
       setError('Game master password is required');
@@ -56,17 +103,66 @@ export default function GameMasterPage() {
       return;
     }
 
+    setIsLoadingSessions(true);
+    setError('');
+
+    // T030: Call gm:getActiveSessions after password entry
+    socket.emit('gm:getActiveSessions', { gmPassword }, (response) => {
+      setIsLoadingSessions(false);
+
+      if (response.success && response.sessions) {
+        // Save password to localStorage for auto-login on refresh
+        localStorage.setItem('gmPassword', gmPassword);
+
+        setSessions(response.sessions);
+        // T031: Display SessionSelector if sessions exist
+        setShowSessionSelector(true);
+      } else {
+        setError(response.error || 'Failed to fetch sessions');
+      }
+    });
+  };
+
+  // T034: Create new session
+  const handleCreateNewSession = () => {
     setIsCreatingSession(true);
     setError('');
 
     socket.emit('gm:createSession', { gmPassword }, (response) => {
       setIsCreatingSession(false);
 
-      if (response.success && response.joinCode) {
+      if (response.success && response.joinCode && response.session) {
         setJoinCode(response.joinCode);
+        setSession(response.session);
+        setPlayers(response.session.players);
+        setGameState(response.session.gameState);
+        setQuestionNumber(response.session.currentQuestionNumber);
+        setShowSessionSelector(false);
         setError('');
       } else {
         setError(response.error || 'Failed to create session');
+      }
+    });
+  };
+
+  // T033: Reconnect to existing session
+  const handleReconnectToSession = (selectedJoinCode: string) => {
+    setIsCreatingSession(true);
+    setError('');
+
+    socket.emit('gm:reconnectToSession', { joinCode: selectedJoinCode, gmPassword }, (response) => {
+      setIsCreatingSession(false);
+
+      if (response.success && response.session) {
+        setJoinCode(selectedJoinCode);
+        setSession(response.session);
+        setPlayers(response.session.players);
+        setGameState(response.session.gameState);
+        setQuestionNumber(response.session.currentQuestionNumber);
+        setShowSessionSelector(false);
+        setError('');
+      } else {
+        setError(response.error || 'Failed to reconnect to session');
       }
     });
   };
@@ -157,11 +253,21 @@ export default function GameMasterPage() {
       setFirstBuzzerId(null);
     }
 
+    // Feature 003: Handle game ended event
+    function onGameEnded(data: { joinCode: string; leaderboard: LeaderboardData }) {
+      console.log('[GM] Game ended, displaying leaderboard');
+      setGameState(GameState.ENDED);
+      setLeaderboard(data.leaderboard);
+      setBuzzerPresses([]);
+      setFirstBuzzerId(null);
+    }
+
     socket.on('game:stateChanged', onGameStateChanged);
     socket.on('game:questionStarted', onQuestionStarted);
     socket.on('game:scoringStarted', onScoringStarted);
     socket.on('game:questionSkipped', onQuestionSkipped);
     socket.on('game:questionEnded', onQuestionEnded);
+    socket.on('game:ended', onGameEnded);
 
     return () => {
       socket.off('game:stateChanged', onGameStateChanged);
@@ -169,6 +275,7 @@ export default function GameMasterPage() {
       socket.off('game:scoringStarted', onScoringStarted);
       socket.off('game:questionSkipped', onQuestionSkipped);
       socket.off('game:questionEnded', onQuestionEnded);
+      socket.off('game:ended', onGameEnded);
     };
   }, [socket]);
 
@@ -370,6 +477,26 @@ export default function GameMasterPage() {
     });
   };
 
+  // Feature 003: Handle end game
+  const handleEndGame = () => {
+    if (!joinCode) return;
+
+    setIsProcessingAction(true);
+    setError('');
+
+    socket.emit('gm:endGame', { joinCode }, (response) => {
+      setIsProcessingAction(false);
+
+      if (response.success && response.leaderboard) {
+        console.log('[GM] Game ended successfully');
+        // Note: leaderboard will be set via game:ended event
+        setError('');
+      } else {
+        setError(response.error || 'Failed to end game');
+      }
+    });
+  };
+
   if (!isConnected) {
     return (
       <main className="min-h-screen flex items-center justify-center p-4">
@@ -379,6 +506,25 @@ export default function GameMasterPage() {
             <CardDescription>Establishing connection to server</CardDescription>
           </CardHeader>
         </Card>
+      </main>
+    );
+  }
+
+  // Feature 002: Show SessionSelector if sessions are available
+  if (showSessionSelector) {
+    return (
+      <main className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        {error && (
+          <div className="fixed top-4 left-1/2 transform -translate-x-1/2 max-w-md w-full px-4 py-3 rounded-lg bg-red-100 border border-red-400 text-red-800 text-center z-50">
+            {error}
+          </div>
+        )}
+        <SessionSelector
+          sessions={sessions}
+          onSelectSession={handleReconnectToSession}
+          onCreateNew={handleCreateNewSession}
+          isLoading={isCreatingSession}
+        />
       </main>
     );
   }
@@ -393,7 +539,7 @@ export default function GameMasterPage() {
               <span>🎮</span> Game Master
             </CardTitle>
             <CardDescription>
-              Enter password to create a new game session
+              Enter password to check for existing sessions or create new one
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -406,8 +552,9 @@ export default function GameMasterPage() {
                   placeholder="Enter password"
                   value={gmPassword}
                   onChange={(e) => setGmPassword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreateSession()}
+                  onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
                   className="pr-10"
+                  disabled={isLoadingSessions}
                 />
                 <Button
                   type="button"
@@ -430,12 +577,24 @@ export default function GameMasterPage() {
             )}
 
             <Button
-              onClick={handleCreateSession}
+              onClick={handlePasswordSubmit}
               className="w-full"
-              disabled={isCreatingSession}
+              disabled={isLoadingSessions}
             >
-              {isCreatingSession ? 'Creating Session...' : 'Create Session'}
+              {isLoadingSessions ? 'Checking Sessions...' : 'Continue'}
             </Button>
+
+            {/* Show logout option if password is auto-filled from localStorage */}
+            {localStorage.getItem('gmPassword') && (
+              <div className="text-center">
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                >
+                  Use different password?
+                </button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </main>
@@ -457,70 +616,190 @@ export default function GameMasterPage() {
         </div>
       )}
 
-      {/* T080: Game State Indicator */}
-      <GameStateIndicator gameState={gameState} questionNumber={questionNumber} />
+      {/* Feature 003: Display leaderboard at top when game has ended */}
+      {gameState === GameState.ENDED && leaderboard ? (
+        <div className="mb-4">
+          <Leaderboard leaderboard={leaderboard} showConfetti={true} />
+        </div>
+      ) : (
+        /* T080: Game State Indicator - only show when game hasn't ended */
+        <GameStateIndicator gameState={gameState} questionNumber={questionNumber} />
+      )}
 
-      {/* T087: Question Controls */}
-      <Card className="transition-all hover:shadow-md">
-        <CardHeader>
-          <CardTitle className="text-center text-xl sm:text-2xl">Question Controls</CardTitle>
-          <CardDescription className="text-center">
-            Manage question flow
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      {/* T087: Question Controls - Redesigned */}
+      <Card className="overflow-hidden border-2 shadow-lg">
+        <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 px-4 sm:px-6 py-5 border-b-2">
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50 mb-3">
+            Question Flow
+          </h2>
+
+          {/* Visual Flow Indicator */}
+          <div className="flex items-center gap-2 sm:gap-3 mb-4">
+            <div className={`flex-1 h-1.5 rounded-full transition-all duration-300 ${
+              gameState === GameState.WAITING ? 'bg-blue-500 shadow-sm shadow-blue-500/50' : 'bg-slate-300 dark:bg-slate-600'
+            }`} />
+            <div className={`flex-1 h-1.5 rounded-full transition-all duration-300 ${
+              gameState === GameState.ACTIVE ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-slate-300 dark:bg-slate-600'
+            }`} />
+            <div className={`flex-1 h-1.5 rounded-full transition-all duration-300 ${
+              gameState === GameState.SCORING ? 'bg-amber-500 shadow-sm shadow-amber-500/50' : 'bg-slate-300 dark:bg-slate-600'
+            }`} />
+          </div>
+
+          <div className="flex items-center justify-between text-xs sm:text-sm font-medium">
+            <span className={`transition-colors ${gameState === GameState.WAITING ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500'}`}>
+              Setup
+            </span>
+            <span className={`transition-colors ${gameState === GameState.ACTIVE ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+              Active
+            </span>
+            <span className={`transition-colors ${gameState === GameState.SCORING ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`}>
+              Scoring
+            </span>
+          </div>
+        </div>
+
+        <CardContent className="p-4 sm:p-6 space-y-4">
           {error && (
-            <div className="text-sm text-destructive text-center p-2 border border-destructive rounded">
-              {error}
+            <div className="bg-red-50 border-l-4 border-red-500 p-3 rounded text-sm text-red-800">
+              <span className="font-semibold">Error:</span> {error}
             </div>
           )}
 
-          {/* T081: Start Question button (only enabled in WAITING state) */}
-          <Button
-            onClick={handleStartQuestion}
-            disabled={gameState !== GameState.WAITING || isProcessingAction}
-            className="w-full"
-            size="lg"
-          >
-            {isProcessingAction && gameState === GameState.WAITING
-              ? 'Starting...'
-              : `Start Question ${questionNumber + 1}`}
-          </Button>
+          {/* Contextual Primary Action */}
+          <div className="space-y-3">
+            {gameState === GameState.WAITING && (
+              <button
+                onClick={handleStartQuestion}
+                disabled={isProcessingAction}
+                className="group relative w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 disabled:from-slate-300 disabled:to-slate-300 text-white font-bold py-4 sm:py-5 px-6 rounded-xl shadow-lg hover:shadow-xl disabled:shadow-none transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed overflow-hidden"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                <span className="relative flex items-center justify-center gap-2 text-lg sm:text-xl">
+                  {isProcessingAction ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Start Question {questionNumber + 1}
+                    </>
+                  )}
+                </span>
+              </button>
+            )}
 
-          <div className="grid grid-cols-2 gap-3">
-            {/* T082: Move to Scoring button (only enabled in ACTIVE state) */}
-            <Button
-              onClick={handleMoveToScoring}
-              disabled={gameState !== GameState.ACTIVE || isProcessingAction}
-              variant="default"
-            >
-              {isProcessingAction && gameState === GameState.ACTIVE
-                ? 'Processing...'
-                : 'Move to Scoring'}
-            </Button>
+            {gameState === GameState.ACTIVE && (
+              <div className="space-y-3">
+                <button
+                  onClick={handleMoveToScoring}
+                  disabled={isProcessingAction}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 disabled:from-slate-300 disabled:to-slate-300 text-white font-bold py-4 sm:py-5 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed"
+                >
+                  <span className="flex items-center justify-center gap-2 text-lg sm:text-xl">
+                    {isProcessingAction ? (
+                      <>
+                        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Move to Scoring
+                      </>
+                    )}
+                  </span>
+                </button>
 
-            {/* T083: Skip Question button (only enabled in ACTIVE state) */}
-            <Button
-              onClick={handleSkipQuestion}
-              disabled={gameState !== GameState.ACTIVE || isProcessingAction}
-              variant="outline"
-            >
-              {isProcessingAction ? 'Skipping...' : 'Skip Question'}
-            </Button>
+                <button
+                  onClick={handleSkipQuestion}
+                  disabled={isProcessingAction}
+                  className="w-full bg-white hover:bg-slate-50 disabled:bg-slate-100 border-2 border-slate-300 text-slate-700 font-semibold py-3 px-6 rounded-lg transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:text-slate-400"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                    </svg>
+                    {isProcessingAction ? 'Skipping...' : 'Skip Question'}
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {gameState === GameState.SCORING && (
+              <button
+                onClick={handleEndQuestion}
+                disabled={isProcessingAction}
+                className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-700 hover:to-amber-600 disabled:from-slate-300 disabled:to-slate-300 text-white font-bold py-4 sm:py-5 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed"
+              >
+                <span className="flex items-center justify-center gap-2 text-lg sm:text-xl">
+                  {isProcessingAction ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Ending...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Complete & Continue
+                    </>
+                  )}
+                </span>
+              </button>
+            )}
           </div>
 
-          {/* End Question button (only enabled in SCORING state) */}
-          <Button
-            onClick={handleEndQuestion}
-            disabled={gameState !== GameState.SCORING || isProcessingAction}
-            className="w-full"
-            size="lg"
-            variant="default"
+          {/* Separator */}
+          <div className="relative py-2">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-200" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-white px-2 text-slate-500 font-medium">or</span>
+            </div>
+          </div>
+
+          {/* End Game Action */}
+          <button
+            onClick={handleEndGame}
+            disabled={gameState === GameState.ENDED || isProcessingAction}
+            className="w-full bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-700 hover:to-rose-600 disabled:from-slate-200 disabled:to-slate-200 text-white disabled:text-slate-400 font-bold py-3.5 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed border-2 border-rose-700/20 disabled:border-slate-300"
           >
-            {isProcessingAction && gameState === GameState.SCORING
-              ? 'Ending...'
-              : 'End Question & Continue'}
-          </Button>
+            <span className="flex items-center justify-center gap-2 text-base sm:text-lg">
+              {isProcessingAction ? (
+                <>
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Ending Game...
+                </>
+              ) : (
+                <>
+                  <span className="text-xl">🏆</span>
+                  End Game & Show Results
+                </>
+              )}
+            </span>
+          </button>
         </CardContent>
       </Card>
 
