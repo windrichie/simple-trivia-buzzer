@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(.specify/scripts/bash/check-prerequisites.sh:*)",
-      "Bash(npm run type-check)"
+      "Bash(npm run type-check)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(git fetch:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh:*)",
+      "Skill(speckit.plan)",
+      "Bash(.specify/scripts/bash/setup-plan.sh:*)",
+      "Bash(.specify/scripts/bash/update-agent-context.sh:*)",
+      "Skill(speckit.tasks)"
     ]
   }
 }
