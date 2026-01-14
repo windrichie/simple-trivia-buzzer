@@ -52,6 +52,7 @@ GM_PASSWORD=your-secure-password      # Required: Game Master password
 FRONTEND_URL=https://your-frontend-url # Required: For CORS in production
 NODE_ENV=production                    # Set automatically in most cases
 PORT=3001                              # Optional: defaults to 3001
+MAX_PLAYERS=10                         # Optional: max players per session (default: 10)
 ```
 
 ### Frontend

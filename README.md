@@ -36,6 +36,7 @@ GM_PASSWORD=changeme123
 PORT=3001
 NODE_ENV=development
 FRONTEND_URL=http://localhost:3000  # For CORS (use production URL in prod)
+MAX_PLAYERS=10                       # Maximum players per session (default: 10)
 
 # Frontend
 NEXT_PUBLIC_WS_URL=http://localhost:3001
