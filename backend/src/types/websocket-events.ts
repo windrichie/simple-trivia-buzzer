@@ -17,6 +17,7 @@ export enum GameState {
   WAITING = 'waiting',
   ACTIVE = 'active',
   SCORING = 'scoring',
+  ENDED = 'ended',  // Feature 003: Game end state
 }
 
 export enum BuzzerSound {
@@ -44,6 +45,9 @@ export interface GameSession {
   currentQuestionNumber: number;
   createdAt: number;
   isActive: boolean;
+  gmPasswordHash: string;    // Feature 002: bcrypt hash of GM password for session ownership
+  lastActivity: number;       // Feature 002: Unix timestamp of last activity (ms)
+  leaderboard: LeaderboardData | null;  // Feature 003: Final rankings when game ends
 }
 
 export interface BuzzerPress {
@@ -51,6 +55,53 @@ export interface BuzzerPress {
   playerName: string;
   timestamp: number;
   isFirst: boolean;
+}
+
+/**
+ * LeaderboardEntry - Feature 003: Game End & Leaderboard
+ * Represents a single player's final ranking
+ */
+export interface LeaderboardEntry {
+  playerId: string;
+  nickname: string;
+  score: number;
+  rank: number;      // 1-based ranking (shared for ties)
+  isTied: boolean;   // True if this rank is shared with other players
+}
+
+/**
+ * LeaderboardData - Feature 003: Game End & Leaderboard
+ * Complete leaderboard with metadata
+ */
+export interface LeaderboardData {
+  entries: LeaderboardEntry[];  // Sorted by rank ascending
+  totalPlayers: number;
+  timestamp: number;            // When leaderboard was calculated
+  sessionId: string;            // Join code for reference
+}
+
+/**
+ * SessionMetadata - Feature 002: GM Session Reconnection
+ * Lightweight structure for displaying session list to GM
+ * Excludes sensitive data like password hashes
+ */
+export interface SessionMetadata {
+  joinCode: string;              // Session identifier (e.g., "ABC123")
+  playerCount: number;           // Total players (including disconnected)
+  connectedPlayerCount: number;  // Currently connected players
+  createdAt: number;             // Unix timestamp (ms)
+  lastActivity: number;          // Unix timestamp of last activity (ms)
+  gameState: GameState;          // Current game state
+  questionNumber: number;        // Current question number
+}
+
+/**
+ * GMSessionListResponse - Feature 002: GM Session Reconnection
+ * Response structure for gm:getActiveSessions event
+ */
+export interface GMSessionListResponse {
+  sessions: SessionMetadata[];  // Array of sessions for this GM password
+  totalCount: number;           // Number of sessions found
 }
 
 // ============================================================================
@@ -65,11 +116,12 @@ export interface ClientToServerEvents {
   /**
    * GM creates a new game session
    * @param gmPassword - Game master password from environment
-   * @param callback - Returns joinCode on success, or error
+   * @param callback - Returns joinCode and session data on success, or error
+   * Feature 002: Modified to return full session data (not just joinCode)
    */
   'gm:createSession': (
     data: { gmPassword: string },
-    callback: (response: { success: boolean; joinCode?: string; error?: string }) => void
+    callback: (response: { success: boolean; joinCode?: string; session?: GameSession; error?: string }) => void
   ) => void;
 
   /**
@@ -125,13 +177,54 @@ export interface ClientToServerEvents {
   ) => void;
 
   /**
-   * GM ends the game session
+   * GM ends the game (Feature 003: Game End & Leaderboard)
+   * Transitions to ENDED state, calculates leaderboard, keeps session active
+   * @param joinCode - Session identifier
+   * @param callback - Returns leaderboard data on success, or error
+   */
+  'gm:endGame': (
+    data: { joinCode: string },
+    callback: (response: { success: boolean; leaderboard?: LeaderboardData; error?: string }) => void
+  ) => void;
+
+  /**
+   * GM ends the game session (completely closes session)
    * @param joinCode - Session identifier
    * @param callback - Confirms session ended or returns error
    */
   'gm:endSession': (
     data: { joinCode: string },
     callback: (response: { success: boolean; error?: string }) => void
+  ) => void;
+
+  /**
+   * GM requests list of all active sessions for their password (Feature 002)
+   * @param gmPassword - GM password (plaintext, hashed on server)
+   * @param callback - Returns list of sessions or empty array
+   */
+  'gm:getActiveSessions': (
+    data: { gmPassword: string },
+    callback: (response: {
+      success: boolean;
+      sessions?: SessionMetadata[];
+      totalCount?: number;
+      error?: string;
+    }) => void
+  ) => void;
+
+  /**
+   * GM reconnects to an existing session by join code (Feature 002)
+   * @param joinCode - Session identifier
+   * @param gmPassword - GM password for verification
+   * @param callback - Returns full session data or error
+   */
+  'gm:reconnectToSession': (
+    data: { joinCode: string; gmPassword: string },
+    callback: (response: {
+      success: boolean;
+      session?: GameSession;
+      error?: string;
+    }) => void
   ) => void;
 
   // ----------------------
@@ -223,6 +316,15 @@ export interface ServerToClientEvents {
    */
   'session:ended': (data: { joinCode: string; reason: string }) => void;
 
+  /**
+   * GM reconnected to existing session (Feature 002)
+   * Sent to: All clients in session (optional notification)
+   */
+  'session:gmReconnected': (data: {
+    joinCode: string;
+    timestamp: number;
+  }) => void;
+
   // ----------------------
   // Player Events
   // ----------------------
@@ -294,6 +396,15 @@ export interface ServerToClientEvents {
    * Sent to: All clients in session
    */
   'game:questionEnded': (data: { questionNumber: number }) => void;
+
+  /**
+   * GM ended the game (Feature 003: Game End & Leaderboard)
+   * Sent to: All clients in session
+   */
+  'game:ended': (data: {
+    joinCode: string;
+    leaderboard: LeaderboardData;
+  }) => void;
 
   // ----------------------
   // Buzzer Events
@@ -368,6 +479,14 @@ export enum ErrorCode {
   // System errors
   INTERNAL_ERROR = 'INTERNAL_ERROR',
   RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
+
+  // Feature 002: GM Session Reconnection errors
+  SESSION_PASSWORD_MISMATCH = 'SESSION_PASSWORD_MISMATCH',
+  NO_SESSIONS_FOUND = 'NO_SESSIONS_FOUND',
+
+  // Feature 003: Game End & Leaderboard errors
+  GAME_ALREADY_ENDED = 'GAME_ALREADY_ENDED',
+  CANNOT_START_NEW_GAME = 'CANNOT_START_NEW_GAME',
 }
 
 // ============================================================================
@@ -428,6 +547,14 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
 
   [ErrorCode.INTERNAL_ERROR]: 'An internal error occurred. Please try again.',
   [ErrorCode.RATE_LIMIT_EXCEEDED]: 'Too many requests. Please slow down.',
+
+  // Feature 002: GM Session Reconnection errors
+  [ErrorCode.SESSION_PASSWORD_MISMATCH]: 'Incorrect GM password for this session.',
+  [ErrorCode.NO_SESSIONS_FOUND]: 'No active sessions found for this password.',
+
+  // Feature 003: Game End & Leaderboard errors
+  [ErrorCode.GAME_ALREADY_ENDED]: 'Game has already ended.',
+  [ErrorCode.CANNOT_START_NEW_GAME]: 'Cannot start new game - current game must be ended first.',
 };
 
 // ============================================================================

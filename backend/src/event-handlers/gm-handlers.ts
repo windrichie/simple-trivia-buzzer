@@ -1,19 +1,22 @@
 import { Socket } from 'socket.io';
 import { sessionStore } from '../session-manager.js';
 import { generateJoinCode } from '../utils/join-code.js';
-import { ErrorCode, ERROR_MESSAGES, GameState, VALIDATION } from '../types/websocket-events.js';
+import { ErrorCode, ERROR_MESSAGES, GameState, VALIDATION, SessionMetadata, GameSession } from '../types/websocket-events.js';
 import { createQuestion } from '../models/question.js';
 import { io } from '../server.js';
+import { hashPassword, comparePassword } from '../utils/password-utils.js';
+import { calculateLeaderboard } from '../services/leaderboard-service.js';
 
 /**
  * Handle GM session creation
  * T026-T029: Create session, validate password, generate join code, emit session:created
+ * Feature 002: Hash GM password for session ownership, return full session data in callback
  */
-export function handleCreateSession(
+export async function handleCreateSession(
   socket: Socket,
   data: { gmPassword: string },
-  callback: (response: { success: boolean; joinCode?: string; error?: string }) => void
-): void {
+  callback: (response: { success: boolean; joinCode?: string; session?: GameSession; error?: string }) => void
+): Promise<void> {
   // T027: Validate GM password
   const expectedPassword = process.env.GM_PASSWORD;
 
@@ -51,30 +54,41 @@ export function handleCreateSession(
     });
   }
 
+  // Feature 002: Hash GM password for session ownership
+  const gmPasswordHash = await hashPassword(data.gmPassword);
+
   // T029: Create session and emit session:created
-  const session = sessionStore.createSession(joinCode);
+  const session = sessionStore.createSession(joinCode, gmPasswordHash);
 
   console.log(`[GM] Session created: ${joinCode}`);
 
   // GM joins the Socket.IO room to receive player updates
   socket.join(joinCode);
 
+  // Prepare session data for response
+  const sessionData = {
+    joinCode: session.joinCode,
+    players: Array.from(session.players.values()),
+    gameState: session.gameState,
+    currentQuestionNumber: session.currentQuestion?.questionNumber || 0,
+    createdAt: session.createdAt,
+    isActive: session.isActive,
+    gmPasswordHash: session.gmPasswordHash,     // Feature 002
+    lastActivity: session.lastActivity,          // Feature 002
+    leaderboard: session.leaderboard,            // Feature 003
+  };
+
   // Emit to GM client
   socket.emit('session:created', {
     joinCode,
-    session: {
-      joinCode: session.joinCode,
-      players: Array.from(session.players.values()),
-      gameState: session.gameState,
-      currentQuestionNumber: session.currentQuestion?.questionNumber || 0,
-      createdAt: session.createdAt,
-      isActive: session.isActive,
-    },
+    session: sessionData,
   });
 
+  // Feature 002: Return session data in callback
   callback({
     success: true,
     joinCode,
+    session: sessionData,
   });
 }
 
@@ -448,4 +462,169 @@ export function handleEndQuestion(
   });
 
   callback({ success: true });
+}
+
+/**
+ * Handle GM ending the game (Feature 003: Game End & Leaderboard)
+ * T017-T021: Calculate leaderboard, transition to ENDED state, broadcast game:ended
+ */
+export function handleEndGame(
+  socket: Socket,
+  data: { joinCode: string },
+  callback: (response: { success: boolean; leaderboard?: any; error?: string }) => void
+): void {
+  const session = sessionStore.getSession(data.joinCode);
+
+  if (!session) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.SESSION_NOT_FOUND],
+    });
+  }
+
+  if (!session.isActive) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.SESSION_INACTIVE],
+    });
+  }
+
+  // T018: Prevent ending game if already in ENDED state
+  if (session.gameState === GameState.ENDED) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.GAME_ALREADY_ENDED],
+    });
+  }
+
+  // T019: Calculate leaderboard from current players
+  const players = Array.from(session.players.values());
+  const leaderboard = calculateLeaderboard(players, session.joinCode);
+
+  // T020: Store leaderboard in session
+  session.leaderboard = leaderboard;
+
+  // T021: Transition to ENDED state
+  session.gameState = GameState.ENDED;
+  session.currentQuestion = null; // Clear any active question
+
+  sessionStore.updateActivity(data.joinCode);
+
+  console.log(`[GM] Game ended in session ${data.joinCode}, ${leaderboard.totalPlayers} players ranked`);
+
+  // T022: Broadcast game:ended with leaderboard to all clients
+  io.to(data.joinCode).emit('game:ended', {
+    joinCode: data.joinCode,
+    leaderboard,
+  });
+
+  // T023: Broadcast game:stateChanged
+  io.to(data.joinCode).emit('game:stateChanged', {
+    joinCode: data.joinCode,
+    newState: GameState.ENDED,
+    questionNumber: session.lastQuestionNumber,
+  });
+
+  callback({
+    success: true,
+    leaderboard,
+  });
+}
+
+/**
+ * Handle GM requesting list of active sessions (Feature 002)
+ * T019 [US1][US2]: Query sessions by password, return SessionMetadata array
+ */
+export async function handleGetActiveSessions(
+  socket: Socket,
+  data: { gmPassword: string },
+  callback: (response: {
+    success: boolean;
+    sessions?: SessionMetadata[];
+    totalCount?: number;
+    error?: string;
+  }) => void
+): Promise<void> {
+  try {
+    // Query sessions by password (compares against stored hash)
+    const sessions = await sessionStore.getSessionsByPassword(data.gmPassword);
+
+    console.log(`[GM] Found ${sessions.length} active sessions for password`);
+
+    callback({
+      success: true,
+      sessions,
+      totalCount: sessions.length,
+    });
+  } catch (error) {
+    console.error('[GM] Error fetching active sessions:', error);
+    callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.INTERNAL_ERROR],
+    });
+  }
+}
+
+/**
+ * Handle GM reconnecting to existing session (Feature 002)
+ * T020 [US1]: Verify password, join room, broadcast reconnection
+ */
+export async function handleReconnectToSession(
+  socket: Socket,
+  data: { joinCode: string; gmPassword: string },
+  callback: (response: {
+    success: boolean;
+    session?: GameSession;
+    error?: string;
+  }) => void
+): Promise<void> {
+  const session = sessionStore.getSession(data.joinCode);
+
+  if (!session) {
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.SESSION_NOT_FOUND],
+    });
+  }
+
+  // Verify GM password against stored hash
+  const isPasswordValid = await comparePassword(data.gmPassword, session.gmPasswordHash);
+
+  if (!isPasswordValid) {
+    console.log(`[GM] Password mismatch for session ${data.joinCode}`);
+    return callback({
+      success: false,
+      error: ERROR_MESSAGES[ErrorCode.SESSION_PASSWORD_MISMATCH],
+    });
+  }
+
+  // GM successfully authenticated, join the room
+  socket.join(data.joinCode);
+
+  // Update session activity
+  sessionStore.updateActivity(data.joinCode);
+
+  console.log(`[GM] Reconnected to session: ${data.joinCode}`);
+
+  // T022: Broadcast session:gmReconnected to all clients (optional notification)
+  socket.to(data.joinCode).emit('session:gmReconnected', {
+    joinCode: data.joinCode,
+    timestamp: Date.now(),
+  });
+
+  // Return full session data to GM
+  callback({
+    success: true,
+    session: {
+      joinCode: session.joinCode,
+      players: Array.from(session.players.values()),
+      gameState: session.gameState,
+      currentQuestionNumber: session.currentQuestion?.questionNumber || 0,
+      createdAt: session.createdAt,
+      isActive: session.isActive,
+      gmPasswordHash: session.gmPasswordHash,
+      lastActivity: session.lastActivity,
+      leaderboard: session.leaderboard,  // Feature 003
+    },
+  });
 }

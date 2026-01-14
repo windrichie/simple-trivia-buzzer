@@ -2,6 +2,8 @@ import { GameState } from '../types/websocket-events.js';
 import { Player } from './player.js';
 import { Question } from './question.js';
 
+import { LeaderboardData } from '../types/websocket-events.js';
+
 export interface GameSession {
   joinCode: string;
   players: Map<string, Player>; // playerId -> Player
@@ -11,12 +13,16 @@ export interface GameSession {
   createdAt: number;
   lastActivity: number;
   isActive: boolean;
+  gmPasswordHash: string; // Feature 002: bcrypt hash of GM password for session ownership
+  leaderboard: LeaderboardData | null; // Feature 003: Final rankings when game ends
 }
 
 /**
  * Create a new game session
+ * @param joinCode - Unique session identifier
+ * @param gmPasswordHash - Bcrypt hash of GM password (for ownership verification)
  */
-export function createGameSession(joinCode: string): GameSession {
+export function createGameSession(joinCode: string, gmPasswordHash: string): GameSession {
   const now = Date.now();
   return {
     joinCode,
@@ -27,6 +33,8 @@ export function createGameSession(joinCode: string): GameSession {
     createdAt: now,
     lastActivity: now,
     isActive: true,
+    gmPasswordHash,
+    leaderboard: null,  // Feature 003: Initially null, populated when game ends
   };
 }
 

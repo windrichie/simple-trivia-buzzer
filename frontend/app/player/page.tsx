@@ -11,7 +11,8 @@ import { Eye, EyeOff, Trash2 } from 'lucide-react';
 import { BuzzerButton } from '@/components/buzzer-button';
 import { BuzzerSoundSelector } from '@/components/buzzer-sound-selector';
 import { GameState } from '@/lib/websocket-events';
-import type { GameSession, Player, BuzzerSound } from '@/lib/websocket-events';
+import type { GameSession, Player, BuzzerSound, LeaderboardData } from '@/lib/websocket-events';
+import { Leaderboard } from '@/components/leaderboard';
 
 export default function PlayerPage() {
   const { socket, isConnected } = useSocket();
@@ -35,6 +36,8 @@ export default function PlayerPage() {
   const [isJoining, setIsJoining] = useState(false);
   // T141: Track connection status for reconnection handling
   const [wasDisconnected, setWasDisconnected] = useState(false);
+  // Feature 003: Game End & Leaderboard state
+  const [leaderboard, setLeaderboard] = useState<LeaderboardData | null>(null);
 
   // T119: Load credentials from localStorage on mount and pre-fill form
   useEffect(() => {
@@ -339,11 +342,21 @@ export default function PlayerPage() {
       setIsFirst(false);
     }
 
+    // Feature 003: Handle game ended event
+    function onGameEnded(data: { joinCode: string; leaderboard: LeaderboardData }) {
+      console.log('[Player] Game ended, displaying leaderboard');
+      setGameState(GameState.ENDED);
+      setLeaderboard(data.leaderboard);
+      setHasBuzzed(false);
+      setIsFirst(false);
+    }
+
     socket.on('game:stateChanged', onGameStateChanged);
     socket.on('game:questionStarted', onQuestionStarted);
     socket.on('game:scoringStarted', onScoringStarted);
     socket.on('game:questionSkipped', onQuestionSkipped);
     socket.on('game:questionEnded', onQuestionEnded);
+    socket.on('game:ended', onGameEnded);
 
     return () => {
       socket.off('game:stateChanged', onGameStateChanged);
@@ -351,6 +364,7 @@ export default function PlayerPage() {
       socket.off('game:scoringStarted', onScoringStarted);
       socket.off('game:questionSkipped', onQuestionSkipped);
       socket.off('game:questionEnded', onQuestionEnded);
+      socket.off('game:ended', onGameEnded);
     };
   }, [socket]);
 
@@ -552,27 +566,36 @@ export default function PlayerPage() {
         </div>
       )}
 
-      {/* Question Number Display - show when question is active */}
-      {questionNumber > 0 && (
-        <div className="bg-primary/10 border-2 border-primary rounded-lg px-4 py-3 text-center">
-          <div className="text-sm text-muted-foreground font-medium">Current Question</div>
-          <div className="text-3xl font-bold text-primary">#{questionNumber}</div>
+      {/* Feature 003: Display leaderboard at top when game has ended */}
+      {gameState === GameState.ENDED && leaderboard ? (
+        <div className="mb-4">
+          <Leaderboard leaderboard={leaderboard} showConfetti={true} />
         </div>
-      )}
+      ) : (
+        <>
+          {/* Question Number Display - show when question is active */}
+          {questionNumber > 0 && (
+            <div className="bg-primary/10 border-2 border-primary rounded-lg px-4 py-3 text-center">
+              <div className="text-sm text-muted-foreground font-medium">Current Question</div>
+              <div className="text-3xl font-bold text-primary">#{questionNumber}</div>
+            </div>
+          )}
 
-      {/* Buzzer Button - prominently displayed at top */}
-      {currentPlayer && (
-        <div className="flex justify-center">
-          <BuzzerButton
-            playerId={currentPlayer.playerId}
-            joinCode={joinCode}
-            buzzerSound={currentPlayer.buzzerSound}
-            gameState={gameState}
-            hasBuzzed={hasBuzzed}
-            isFirst={isFirst}
-            onPressBuzzer={handlePressBuzzer}
-          />
-        </div>
+          {/* Buzzer Button - prominently displayed at top */}
+          {currentPlayer && (
+            <div className="flex justify-center">
+              <BuzzerButton
+                playerId={currentPlayer.playerId}
+                joinCode={joinCode}
+                buzzerSound={currentPlayer.buzzerSound}
+                gameState={gameState}
+                hasBuzzed={hasBuzzed}
+                isFirst={isFirst}
+                onPressBuzzer={handlePressBuzzer}
+              />
+            </div>
+          )}
+        </>
       )}
 
       <Card className="transition-all hover:shadow-md">
@@ -615,45 +638,58 @@ export default function PlayerPage() {
             />
           )}
 
-          {/* T100: Show all players' scores sorted by score descending */}
-          <div className="space-y-3">
-            <h3 className="font-semibold text-lg flex items-center gap-2">
-              <span>👥 Players</span>
-              <span className="text-sm text-muted-foreground">({players.length}/5)</span>
-            </h3>
-            <div className="space-y-2">
-              {players
-                .sort((a, b) => b.score - a.score)
-                .map((player, index) => (
-                <div
-                  key={player.playerId}
-                  className={`flex items-center justify-between p-3 border-2 rounded-lg transition-all ${
-                    player.playerId === currentPlayer?.playerId
-                      ? 'bg-primary/10 border-primary shadow-md'
-                      : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    {index === 0 && players.length > 1 && (
-                      <span className="text-xl">👑</span>
-                    )}
-                    <div
-                      className={`w-3 h-3 rounded-full shadow-sm ${
-                        player.isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-300'
-                      }`}
-                    />
-                    <span className="font-medium">{player.nickname}</span>
-                    {player.playerId === currentPlayer?.playerId && (
-                      <span className="text-xs font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
-                        You
-                      </span>
-                    )}
-                  </div>
-                  <span className="font-bold text-lg text-primary">{player.score}</span>
-                </div>
-              ))}
+          {/* Interim Leaderboard - Top 3 Current Standings */}
+          {players.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="font-semibold text-lg flex items-center gap-2">
+                <span>🏆 Current Standings</span>
+                <span className="text-sm text-muted-foreground">(Top 3)</span>
+              </h3>
+              <div className="space-y-2">
+                {players
+                  .sort((a, b) => b.score - a.score)
+                  .slice(0, 3)
+                  .map((player, index) => {
+                    const medals = ['🥇', '🥈', '🥉'];
+                    const bgColors = ['bg-yellow-50 border-yellow-300', 'bg-gray-50 border-gray-300', 'bg-orange-50 border-orange-300'];
+
+                    return (
+                      <div
+                        key={player.playerId}
+                        className={`flex items-center justify-between p-4 border-2 rounded-lg transition-all ${
+                          player.playerId === currentPlayer?.playerId
+                            ? 'bg-primary/10 border-primary shadow-lg scale-[1.02]'
+                            : bgColors[index]
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{medals[index]}</span>
+                          <div
+                            className={`w-3 h-3 rounded-full shadow-sm ${
+                              player.isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-300'
+                            }`}
+                          />
+                          <div className="flex flex-col">
+                            <span className="font-bold text-base">{player.nickname}</span>
+                            {player.playerId === currentPlayer?.playerId && (
+                              <span className="text-xs font-semibold text-primary">
+                                (You)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="font-bold text-2xl text-primary">{player.score}</span>
+                      </div>
+                    );
+                  })}
+              </div>
+              {players.length > 3 && (
+                <p className="text-xs text-center text-muted-foreground">
+                  +{players.length - 3} more player{players.length - 3 !== 1 ? 's' : ''}
+                </p>
+              )}
             </div>
-          </div>
+          )}
         </CardContent>
       </Card>
     </main>
