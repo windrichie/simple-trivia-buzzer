@@ -186,9 +186,17 @@ sudo systemctl status nginx
 ### 4. Install Certbot (SSL Certificates)
 
 ```bash
-# Install Certbot for Let's Encrypt SSL
-sudo apt install -y certbot python3-certbot-nginx
+# Install snapd if not already installed
+sudo apt install -y snapd
+
+# Install Certbot via snap (recommended, avoids Python dependency conflicts)
+sudo snap install --classic certbot
+
+# Create symlink so 'certbot' command works
+sudo ln -s /snap/bin/certbot /usr/bin/certbot
 ```
+
+**Why snap?** The apt version of certbot can have Python dependency conflicts. The snap version is isolated and officially recommended by Let's Encrypt.
 
 ---
 
@@ -290,60 +298,32 @@ Internet → Nginx (Port 80/443)
 
 ### 1. Create Nginx Configuration
 
+**Important:** Start with HTTP-only configuration. Certbot will automatically add HTTPS later.
+
 ```bash
 sudo nano /etc/nginx/sites-available/trivia
 ```
 
-Paste the following configuration:
+Paste the following **HTTP-only** configuration:
 
 ```nginx
-# Trivia Buzzer App - Nginx Configuration
-# Both frontend and backend on same machine
-
-# Redirect HTTP to HTTPS
+# Trivia Buzzer App - HTTP Only (Certbot will add HTTPS automatically)
 server {
     listen 80;
     listen [::]:80;
     server_name trivia.yourdomain.com;
 
-    # Let's Encrypt challenge
+    # Let's Encrypt challenge (needed for Certbot)
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
 
-    # Redirect all other traffic to HTTPS
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-# HTTPS Configuration
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name trivia.yourdomain.com;
-
-    # SSL certificates (will be added by Certbot)
-    # ssl_certificate /etc/letsencrypt/live/trivia.yourdomain.com/fullchain.pem;
-    # ssl_certificate_key /etc/letsencrypt/live/trivia.yourdomain.com/privkey.pem;
-
-    # SSL configuration
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
-    # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # Max upload size
-    client_max_body_size 10M;
-
     # Logging
     access_log /var/log/nginx/trivia-access.log;
     error_log /var/log/nginx/trivia-error.log;
+
+    # Max upload size
+    client_max_body_size 10M;
 
     # Frontend (Next.js) - Default location
     location / {
@@ -356,24 +336,6 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
-
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    # Backend API - HTTP endpoints
-    location /api {
-        # Remove /api prefix when proxying
-        rewrite ^/api/(.*) /$1 break;
-
-        proxy_pass http://localhost:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
 
         # Timeouts
         proxy_connect_timeout 60s;
@@ -417,10 +379,12 @@ server {
 }
 ```
 
-**Important**: Replace `trivia.yourdomain.com` with your actual domain in:
-- Line 7 (`server_name`)
-- Line 25 (`server_name`)
-- SSL certificate paths (lines 29-30, will be auto-filled by Certbot)
+**Important**: Replace `trivia.yourdomain.com` with your actual domain or server IP.
+
+**Note**: This is an HTTP-only configuration. After running Certbot in the next section, it will automatically:
+- Add HTTPS configuration with SSL certificates
+- Add HTTP→HTTPS redirect
+- Add security headers
 
 ### 2. Enable the Configuration
 
@@ -434,9 +398,14 @@ sudo rm /etc/nginx/sites-enabled/default
 # Test Nginx configuration
 sudo nginx -t
 
-# If test passes, reload Nginx
-sudo systemctl reload nginx
+# If test passes, restart Nginx
+sudo systemctl restart nginx
+
+# Verify Nginx is running
+sudo systemctl status nginx
 ```
+
+Your site should now be accessible at `http://trivia.yourdomain.com` (HTTP only). Next, we'll add HTTPS with Certbot.
 
 ---
 
@@ -444,16 +413,27 @@ sudo systemctl reload nginx
 
 ### 1. Obtain SSL Certificate with Let's Encrypt
 
+**Important:** Make sure your domain DNS is pointing to your server's IP address before running Certbot.
+
 ```bash
 # Run Certbot (replace with your domain and email)
-sudo certbot --nginx -d trivia.yourdomain.com --email your-email@example.com --agree-tos --no-eff-email
-
-# Certbot will:
-# 1. Verify domain ownership
-# 2. Obtain SSL certificate
-# 3. Automatically update Nginx config
-# 4. Set up auto-renewal
+sudo certbot --nginx -d trivia.yourdomain.com
 ```
+
+Certbot will prompt you for:
+- **Email address**: Enter your email (for renewal notifications)
+- **Terms of Service**: Press Y to agree
+- **Share email with EFF**: Press N (or Y if you want)
+
+**What Certbot does automatically:**
+1. ✅ Verifies domain ownership via HTTP challenge
+2. ✅ Obtains SSL certificate from Let's Encrypt
+3. ✅ Modifies your Nginx config to add HTTPS server block
+4. ✅ Adds SSL certificate paths
+5. ✅ Adds HTTP→HTTPS redirect
+6. ✅ Sets up auto-renewal cronjob
+
+After Certbot completes, your Nginx config will have both HTTP (redirecting to HTTPS) and HTTPS configurations!
 
 ### 2. Verify SSL Certificate
 
@@ -486,7 +466,7 @@ sudo certbot renew
 ```bash
 cd ~/trivia-simple-app
 
-# Create ecosystem.config.js
+# Create ecosystem.config.js with environment variables
 cat > ecosystem.config.js << 'EOF'
 module.exports = {
   apps: [
@@ -500,6 +480,9 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3001,
+        GM_PASSWORD: 'your-secure-password-here',  // CHANGE THIS!
+        MAX_PLAYERS: '10',
+        FRONTEND_URL: 'https://trivia.yourdomain.com',  // CHANGE THIS!
       },
       error_file: '~/.pm2/logs/trivia-backend-error.log',
       out_file: '~/.pm2/logs/trivia-backend-out.log',
@@ -519,6 +502,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
+        NEXT_PUBLIC_WS_URL: 'https://trivia.yourdomain.com',  // CHANGE THIS!
       },
       error_file: '~/.pm2/logs/trivia-frontend-error.log',
       out_file: '~/.pm2/logs/trivia-frontend-out.log',
@@ -533,32 +517,66 @@ module.exports = {
 EOF
 ```
 
+**Important:** Edit the file to replace:
+- `your-secure-password-here` with your Game Master password
+- `trivia.yourdomain.com` with your actual domain (both places)
+
+```bash
+# Edit the file to update values
+nano ecosystem.config.js
+```
+
+**Security Note:** Keep `ecosystem.config.js` secure since it contains your GM password. Don't commit it to public repositories.
+
 ### 2. Start Applications with PM2
 
 ```bash
-# Load .env file and start all apps
+# Start all apps
 pm2 start ecosystem.config.js
 
 # Check status
 pm2 status
 
-# View logs
+# View logs (look for "Configuration loaded" message)
 pm2 logs
 
 # View logs for specific app
-pm2 logs trivia-backend
-pm2 logs trivia-frontend
+pm2 logs trivia-backend --lines 20
+pm2 logs trivia-frontend --lines 20
 ```
 
-### 3. Save PM2 Configuration
+**Verify Backend Started Correctly:**
+You should see in the backend logs:
+```
+✅ Configuration loaded:
+   - MAX_PLAYERS: 10
+   - PORT: 3001
+   - NODE_ENV: production
+   - FRONTEND_URL: https://trivia.yourdomain.com
+```
+
+**No GM_PASSWORD warning** means it loaded successfully (password not logged for security).
+
+### 3. Configure PM2 Auto-Start on Boot
 
 ```bash
+# Generate startup script (run this as the trivia user)
+pm2 startup
+
+# PM2 will output a command like:
+# sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u trivia --hp /home/trivia
+
+# Copy and run the command it gives you (with sudo)
+# Example (your command will be similar):
+sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u trivia --hp /home/trivia
+
 # Save current PM2 process list
 pm2 save
 
-# This ensures apps restart after reboot
-# (you already ran pm2 startup earlier)
+# This creates a systemd service that starts PM2 on boot
 ```
+
+**Important:** You must run the `sudo env...` command that PM2 outputs. Don't copy the example - use your actual command!
 
 ### 4. Verify Auto-Start
 
@@ -568,10 +586,38 @@ sudo reboot
 
 # After reboot, reconnect and check
 ssh ubuntu@your-vm-ip
-sudo su - trivia
 pm2 status
 
 # Apps should be running automatically
+# If empty, you may need to switch to trivia user first:
+sudo su - trivia
+pm2 status
+```
+
+**Understanding the PM2 Service Status:**
+
+After running `pm2 startup` and `pm2 save`, you may see:
+```bash
+sudo systemctl status pm2-root
+# Shows: Active: inactive (dead)
+```
+
+**This is normal!** The PM2 systemd service only runs during boot to resurrect saved processes, then exits. It's not a continuously running service.
+
+**If PM2 status is empty after reboot:**
+```bash
+# Manually trigger the service to test
+sudo systemctl start pm2-root
+
+# Check for errors
+sudo systemctl status pm2-root -l
+
+# Check PM2 logs
+pm2 logs --err
+
+# If issues persist, restart apps manually and save again
+pm2 start ecosystem.config.js
+pm2 save
 ```
 
 ---
