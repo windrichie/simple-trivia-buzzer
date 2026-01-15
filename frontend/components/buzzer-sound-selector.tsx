@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { BuzzerSound } from '@/lib/websocket-events';
 import { useAudio } from '@/hooks/use-audio';
+import { ensureSoundLoaded } from '@/lib/audio';
 import {
   Select,
   SelectContent,
@@ -51,12 +52,15 @@ export function BuzzerSoundSelector({
 
     setIsChanging(true);
 
-    // T146: Auto-preview the new sound when changing
-    if (isLoaded) {
-      play(buzzerSound);
-    }
-
     try {
+      // Eagerly load the new sound before playing (fixes lag on mobile)
+      await ensureSoundLoaded(buzzerSound);
+
+      // T146: Auto-preview the new sound when changing
+      if (isLoaded) {
+        play(buzzerSound);
+      }
+
       const response = await onChangeBuzzerSound({
         joinCode,
         playerId,

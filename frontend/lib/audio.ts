@@ -1,15 +1,21 @@
 import { BuzzerSound } from './websocket-events';
 
 /**
- * Audio manager for preloading and playing buzzer sounds
- * Supports both file-based sounds and Web Audio API synthesis
+ * Audio manager optimized for mobile devices (especially iOS Safari)
+ * Key optimizations:
+ * - AudioContext resumption on every interaction
+ * - Audio pool to avoid cloning
+ * - Explicit audio unlock for iOS
+ * - Eager preloading
  */
 
-// Map to store preloaded audio elements
-const audioCache = new Map<BuzzerSound, HTMLAudioElement>();
+// Map to store preloaded audio pools (multiple instances per sound)
+const audioPools = new Map<BuzzerSound, HTMLAudioElement[]>();
+const POOL_SIZE = 3; // Number of audio instances per sound
 
 // Audio context for synthesized sounds
 let audioContext: AudioContext | null = null;
+let audioUnlocked = false;
 
 /**
  * Get or create the audio context
@@ -19,6 +25,51 @@ function getAudioContext(): AudioContext {
     audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
   }
   return audioContext;
+}
+
+/**
+ * Resume AudioContext (required for iOS Safari)
+ * MUST be called on every user interaction
+ */
+export async function resumeAudioContext(): Promise<void> {
+  const ctx = getAudioContext();
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume();
+      console.log('[Audio] AudioContext resumed');
+    } catch (error) {
+      console.error('[Audio] Failed to resume AudioContext:', error);
+    }
+  }
+}
+
+/**
+ * Unlock audio on iOS by playing a silent sound on first user interaction
+ * This is required for iOS Safari to allow audio playback
+ */
+export async function unlockAudioOnMobile(): Promise<void> {
+  if (audioUnlocked) return;
+
+  try {
+    // Resume AudioContext
+    await resumeAudioContext();
+
+    // Play a silent sound to unlock
+    const silentAudio = new Audio();
+    silentAudio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAA4S0O0m5AAAAAAAA//sQZAAP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwBLkAAAAAAAAAABUgJAMGQgABzAAABITRDk2+AAAAAAD/+xBkAA/wAABpAAAACAAADSAAAAEAAAGkAAAAIAAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//sQZDoPwAABpAAAACAAADSAAAAEAAAGkAAAAIAAANIAAAARVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=';
+    silentAudio.volume = 0.001;
+
+    await silentAudio.play();
+    silentAudio.pause();
+    silentAudio.currentTime = 0;
+
+    audioUnlocked = true;
+    console.log('[Audio] Audio unlocked for iOS');
+  } catch (error) {
+    console.log('[Audio] Audio unlock not needed or failed:', error);
+    // Not a critical error - some browsers don't need this
+    audioUnlocked = true;
+  }
 }
 
 /**
@@ -68,21 +119,6 @@ function generateSynthSound(sound: BuzzerSound, volume: number = 0.7): void {
 }
 
 /**
- * Get the appropriate audio format based on browser support
- */
-function getSupportedFormat(): 'mp3' | 'ogg' {
-  const audio = new Audio();
-
-  // Check OGG support first (better quality, open format)
-  if (audio.canPlayType('audio/ogg; codecs="vorbis"')) {
-    return 'ogg';
-  }
-
-  // Fall back to MP3 (universal support)
-  return 'mp3';
-}
-
-/**
  * Map buzzer sound enum to actual file names
  */
 const soundFileMap: Record<BuzzerSound, string> = {
@@ -103,68 +139,144 @@ export function getAudioPath(sound: BuzzerSound): string {
 }
 
 /**
- * Preload a buzzer sound into the audio cache
+ * Create an audio pool for a specific sound
+ * This avoids slow cloning on mobile
+ */
+function createAudioPool(sound: BuzzerSound): HTMLAudioElement[] {
+  const pool: HTMLAudioElement[] = [];
+  const path = getAudioPath(sound);
+
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.src = path;
+    audio.load();
+    pool.push(audio);
+  }
+
+  return pool;
+}
+
+/**
+ * Preload a buzzer sound into an audio pool
+ * Creates multiple audio instances for overlapping plays
  */
 export function preloadSound(sound: BuzzerSound): Promise<void> {
   return new Promise((resolve, reject) => {
     // Return immediately if already cached
-    if (audioCache.has(sound)) {
+    if (audioPools.has(sound)) {
       resolve();
       return;
     }
 
-    const audio = new Audio();
-    const path = getAudioPath(sound);
+    const pool = createAudioPool(sound);
+    let loadedCount = 0;
+    let hasError = false;
 
-    audio.addEventListener('canplaythrough', () => {
-      audioCache.set(sound, audio);
-      resolve();
-    }, { once: true });
+    pool.forEach((audio) => {
+      audio.addEventListener('canplaythrough', () => {
+        loadedCount++;
+        if (loadedCount === POOL_SIZE && !hasError) {
+          audioPools.set(sound, pool);
+          console.log(`[Audio] Sound pool ready: ${sound}`);
+          resolve();
+        }
+      }, { once: true });
 
-    audio.addEventListener('error', (e) => {
-      console.error(`Failed to load sound: ${sound}`, e);
-      reject(new Error(`Failed to load sound: ${sound}`));
-    }, { once: true });
+      audio.addEventListener('error', (e) => {
+        if (!hasError) {
+          hasError = true;
+          console.error(`Failed to load sound: ${sound}`, e);
+          reject(new Error(`Failed to load sound: ${sound}`));
+        }
+      }, { once: true });
+    });
 
-    audio.preload = 'auto';
-    audio.src = path;
-    audio.load();
+    // Timeout fallback (resolve even if not all loaded)
+    setTimeout(() => {
+      if (loadedCount > 0 && !hasError) {
+        audioPools.set(sound, pool);
+        resolve();
+      }
+    }, 3000);
   });
 }
 
 /**
  * Preload all buzzer sounds
  * Call this on app initialization for instant playback
- * If files are not available, will fall back to synthesized sounds
  */
 export async function preloadAllSounds(): Promise<void> {
   const sounds = Object.values(BuzzerSound);
 
   try {
     await Promise.all(sounds.map(sound => preloadSound(sound)));
-    console.log('[Audio] All buzzer sounds preloaded successfully');
+    console.log('[Audio] All buzzer sound pools preloaded successfully');
   } catch (error) {
-    console.log('[Audio] Sound files not found, using Web Audio API synthesis');
+    console.log('[Audio] Some sounds failed to load, will use synthesis as fallback');
     // Don't throw - we'll use synthesized sounds as fallback
   }
 }
 
 /**
- * Play a buzzer sound
+ * Get an available audio instance from the pool
+ * Uses round-robin to distribute load
+ */
+let poolIndexes = new Map<BuzzerSound, number>();
+
+function getAudioFromPool(sound: BuzzerSound): HTMLAudioElement | null {
+  const pool = audioPools.get(sound);
+  if (!pool || pool.length === 0) return null;
+
+  // Get current index (round-robin)
+  const currentIndex = poolIndexes.get(sound) || 0;
+  const audio = pool[currentIndex];
+
+  // Update index for next call
+  poolIndexes.set(sound, (currentIndex + 1) % pool.length);
+
+  return audio;
+}
+
+/**
+ * Play a buzzer sound (optimized for mobile)
  * @param sound - The buzzer sound to play
  * @param volume - Volume level (0-1), defaults to 0.7
- * @returns Promise that resolves when sound finishes playing
+ * @returns Promise that resolves when sound starts playing
  */
 export async function playSound(sound: BuzzerSound, volume: number = 0.7): Promise<void> {
+  // CRITICAL: Resume AudioContext on EVERY interaction (iOS requirement)
+  await resumeAudioContext();
+
+  // Unlock audio if first interaction
+  if (!audioUnlocked) {
+    await unlockAudioOnMobile();
+  }
+
   try {
-    // Try to play from cache first (file-based)
-    let audio = audioCache.get(sound);
+    // Try to play from pool first (file-based)
+    const audio = getAudioFromPool(sound);
 
     if (audio) {
-      // Clone the audio element to allow overlapping plays
-      const audioClone = audio.cloneNode() as HTMLAudioElement;
-      audioClone.volume = Math.max(0, Math.min(1, volume));
-      await audioClone.play();
+      // Reset if already playing
+      if (!audio.paused) {
+        audio.currentTime = 0;
+      }
+
+      audio.volume = Math.max(0, Math.min(1, volume));
+
+      // Play with error handling
+      try {
+        await audio.play();
+      } catch (playError: any) {
+        // If play fails due to interaction requirements, try synthesis
+        if (playError.name === 'NotAllowedError') {
+          console.log('[Audio] Play blocked, falling back to synthesis');
+          generateSynthSound(sound, volume);
+        } else {
+          throw playError;
+        }
+      }
     } else {
       // Fall back to synthesized sound using Web Audio API
       generateSynthSound(sound, volume);
@@ -181,12 +293,24 @@ export async function playSound(sound: BuzzerSound, volume: number = 0.7): Promi
 }
 
 /**
+ * Eagerly load a specific sound (useful when switching sounds)
+ * Ensures the sound is ready immediately when needed
+ */
+export async function ensureSoundLoaded(sound: BuzzerSound): Promise<void> {
+  if (!audioPools.has(sound)) {
+    await preloadSound(sound);
+  }
+}
+
+/**
  * Stop all currently playing sounds
  */
 export function stopAllSounds(): void {
-  audioCache.forEach(audio => {
-    audio.pause();
-    audio.currentTime = 0;
+  audioPools.forEach(pool => {
+    pool.forEach(audio => {
+      audio.pause();
+      audio.currentTime = 0;
+    });
   });
 }
 
@@ -196,5 +320,6 @@ export function stopAllSounds(): void {
  */
 export function clearAudioCache(): void {
   stopAllSounds();
-  audioCache.clear();
+  audioPools.clear();
+  poolIndexes.clear();
 }
